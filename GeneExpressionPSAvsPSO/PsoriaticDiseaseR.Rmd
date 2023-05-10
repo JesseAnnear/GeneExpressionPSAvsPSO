@@ -1,0 +1,80 @@
+---
+title: "PsoraticDiseaseGeneExpression"
+author: "Jesse Annear"
+date: "2023-04-24"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+
+# load series and platform data from GEO
+# Version info: R 3.2.3, Biobase 2.30.0, GEOquery 2.40.0, limma 3.26.8
+################################################################
+#   Data plots for selected GEO samples
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("GEOquery")
+
+library(GEOquery)
+library(limma)
+library(umap)
+library(tidyverse)
+```
+
+```{r}
+
+# Load series from geo
+gset <- getGEO("GSE61281", GSEMatrix =TRUE, getGPL=FALSE)
+if (length(gset) > 1) idx <- grep("GPL6480", attr(gset, "Gene symbols")) else idx <- 1
+gset <- gset[[idx]]
+
+ex <- exprs(gset)
+write.csv(ex,'GSE61281.csv')
+patient_info <- gset@phenoData@data
+write.csv(patient_info,'patient_info.csv')
+# function to get information about the scanner used
+gpl <-getGEO('GPL6480')
+#  putting info into a table, this table contains gene names, and other things
+gpl_info <- gpl@dataTable@table
+```
+
+```{r}
+# we must design a model matrix,1's = PSA,2's = PSO,3's = S
+design <- model.matrix(~ 0+factor(c(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3)))
+# assign the column names
+colnames(design) <- c("PSA", "PSO", "C")
+cont_matrix <- makeContrasts(PSAvC = PSA-C, PSAvPSO = PSA-PSO, levels=design)
+#cont_matrix <- makeContrasts(PSAvC = PSA-C, PSOvC = PSO-C, levels=design)
+# I commented this out but it can be observed if ran that PSOvC actually showed not significantly expressed genes
+# Fit the expression matrix to a linear model
+fit <- lmFit(ex, design)
+# Compute contrast
+fit_contrast <- contrasts.fit(fit, cont_matrix)
+# Bayes statistics of differential expression
+# *There are several options to tweak!*
+fit_contrast <- eBayes(fit_contrast)
+# Generate a vocalno plot to visualize differential expression
+volcanoplot(fit_contrast,style = 'p-value',highlight = 30)
+# Generate a list of top 100 differentially expressed genes
+top_genes <- topTable(fit_contrast, number = 428, adjust = "BH")
+treat_genes <-topTreat(fit_contrast, number = 500)
+# Summary of results (number of differentially expressed genes)
+result <- decideTests(fit_contrast)
+summary(result)
+gene_list<-rownames(top_genes)
+write.csv(result,'significant_genes.csv')
+
+#give complete gene list,sorted
+PSA_C_inorder<-data.frame(fit_contrast[["p.value"]])
+PSO_C_inorder<-data.frame(fit_contrast[["p.value"]])
+
+PSA_C_inorder<-PSA_C_inorder[order(PSA_C_inorder$PSAvC),] 
+PSO_C_inorder<-PSO_C_inorder[order(PSO_C_inorder$PSAvPSO),]
+par(mar=c(4,4,2,1))
+title <- paste ("GSE61281", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, main=title, legend=F)
+```
